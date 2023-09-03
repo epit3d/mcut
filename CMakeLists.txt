@@ -38,6 +38,11 @@ cmake_minimum_required(VERSION 3.12...3.13 FATAL_ERROR)
 
 project(mcut LANGUAGES CXX C) 
 
+if (GO_BINDINGS)
+	# add #define GO_BINDINGS
+	add_compile_definitions(GO_BINDINGS)
+endif()
+
 get_directory_property(MCUT_PARENT_DIR PARENT_DIRECTORY)
 if(NOT MCUT_PARENT_DIR)
 	set(MCUT_TOPLEVEL_PROJECT ON)

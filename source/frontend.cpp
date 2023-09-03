@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unordered_map>
+#include <iostream>
 
 #include "mcut/internal/cdt/cdt.h"
 #include "mcut/internal/timer.h"
@@ -23,6 +24,36 @@
 #if defined(PROFILING_BUILD)
 thread_local std::stack<std::unique_ptr<mini_timer>> g_thrd_loc_timerstack;
 #endif
+
+#include <iostream>
+#include <algorithm>
+#include <functional>
+
+#include <typeinfo>
+#include <cxxabi.h>
+
+namespace detail
+{
+    template <typename F>
+    struct function_traits : public function_traits<decltype(&F::operator())>
+    {
+    };
+
+    template <typename R, typename C, typename... Args>
+    struct function_traits<R (C::*)(Args...) const>
+    {
+        using function_type = std::function<R(Args...)>;
+    };
+}
+
+template <typename F>
+using function_type_t = typename detail::function_traits<F>::function_type;
+
+template <typename F>
+function_type_t<F> to_function(F &lambda)
+{
+    return static_cast<function_type_t<F>>(lambda);
+}
 
 thread_local std::string per_thread_api_log_str;
 
@@ -53,10 +84,18 @@ void create_context_impl(McContext* pOutContext, McFlags flags, uint32_t helperT
     *pOutContext = handle;
 }
 
+#ifdef GO_BINDINGS
+void debug_message_callback_impl(
+    McContext contextHandle,
+    pfn_mcDebugOutput_CALLBACK cb,
+    const McVoid *userParam,
+    uintptr_t go_callback)
+#else
 void debug_message_callback_impl(
     McContext contextHandle,
     pfn_mcDebugOutput_CALLBACK cb,
     const McVoid* userParam)
+#endif
 {
     MCUT_ASSERT(contextHandle != nullptr);
     MCUT_ASSERT(cb != nullptr);
@@ -73,7 +112,11 @@ void debug_message_callback_impl(
     // const std::unique_ptr<context_t>& context_uptr = context_entry_iter->second;
 
     // set callback function ptr, and user pointer
+    #ifdef GO_BINDINGS
+    context_ptr->set_debug_callback_data(cb, userParam, go_callback);
+    #else
     context_ptr->set_debug_callback_data(cb, userParam);
+    #endif
 }
 
 void get_debug_message_log_impl(McContext context,
@@ -572,10 +615,18 @@ void wait_for_events_impl(
     }
 }
 
+#ifndef GO_BINDINGS
 void set_event_callback_impl(
     McEvent eventHandle,
     pfn_McEvent_CALLBACK eventCallback,
     McVoid* data)
+#else
+void set_event_callback_impl(
+    McEvent eventHandle,
+    pfn_McEvent_CALLBACK eventCallback,
+    McVoid *data,
+    uintptr_t go_callback)
+#endif
 {
     std::shared_ptr<event_t> event_ptr = g_events.find_first_if([=](const std::shared_ptr<event_t> eptr) { return eptr->m_user_handle == eventHandle; });
 
@@ -585,7 +636,11 @@ void set_event_callback_impl(
         throw std::invalid_argument("unknown event object");
     }
 
+    #ifndef GO_BINDINGS
     event_ptr->set_callback_data(eventHandle, eventCallback, data);
+    #else
+    event_ptr->set_callback_data(eventHandle, eventCallback, data, go_callback);
+    #endif
 }
 
 void dispatch_impl(

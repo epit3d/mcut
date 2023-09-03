@@ -80,10 +80,18 @@ extern thread_local std::string per_thread_api_log_str; // frontend.cpp
 extern "C" void create_context_impl(
     McContext* pContext, McFlags flags, uint32_t num_helper_threads) noexcept(false);
 
+#ifndef GO_BINDINGS
 extern "C" void debug_message_callback_impl(
     McContext context,
     pfn_mcDebugOutput_CALLBACK cb,
     const McVoid* userParam) noexcept(false);
+#else
+extern "C" void debug_message_callback_impl(
+    McContext context,
+    pfn_mcDebugOutput_CALLBACK cb,
+    const McVoid *userParam,
+    uintptr_t cgo_handle) noexcept(false);
+#endif
 
 extern "C" void get_debug_message_log_impl(McContext context,
     McUint32 count, McSize bufSize,
@@ -121,10 +129,18 @@ extern "C" void get_event_info_impl(
     McVoid* pMem,
     McSize* pNumBytes) noexcept(false);
 
+#ifndef GO_BINDINGS
 extern "C" void set_event_callback_impl(
     McEvent eventHandle,
     pfn_McEvent_CALLBACK eventCallback,
     McVoid* data);
+#else
+extern "C" void set_event_callback_impl(
+    McEvent eventHandle,
+    pfn_McEvent_CALLBACK eventCallback,
+    McVoid *data,
+    uintptr_t handle);
+#endif
 
 extern "C" void wait_for_events_impl(
     uint32_t numEventsInWaitlist,
@@ -311,6 +327,10 @@ struct event_t {
         pfn_McEvent_CALLBACK m_fn_ptr;
         // pointer passed to user provided callback function
         McVoid* m_data_ptr;
+        // pointer to golang cgo callback handle
+        #ifdef GO_BINDINGS
+        uintptr_t cgo_handle;
+        #endif
         // atomic boolean flag indicating whether the callback associated with event
         // object has been called
         std::atomic<bool> m_invoked;
@@ -386,7 +406,11 @@ struct event_t {
 
         if (m_callback_info.m_invoked.load() == false && m_callback_info.m_fn_ptr != nullptr && m_runtime_exec_status.load() == MC_NO_ERROR) {
             MCUT_ASSERT(m_user_handle != MC_NULL_HANDLE);
+            #ifndef GO_BINDINGS
             (*(m_callback_info.m_fn_ptr))(m_user_handle, m_callback_info.m_data_ptr);
+            #else
+            (*(m_callback_info.m_fn_ptr))(m_callback_info.cgo_handle, m_user_handle, m_callback_info.m_data_ptr);
+            #endif
         }
 
         log_msg("[MCUT] Destroy event (type=" << get_cmd_type_str() << ", handle=" << m_user_handle << ")");
@@ -425,18 +449,29 @@ struct event_t {
     }
 
     // thread-safe function to set the callback function for an event object
+    #ifndef GO_BINDINGS
     void set_callback_data(McEvent handle, pfn_McEvent_CALLBACK fn_ptr, McVoid* data_ptr)
+    #else
+    void set_callback_data(McEvent handle, pfn_McEvent_CALLBACK fn_ptr, McVoid *data_ptr, uintptr_t go_callback)
+    #endif
     {
         std::lock_guard<std::mutex> lock(m_callback_mutex); // exclusive access
 
         m_user_handle = handle;
         m_callback_info.m_fn_ptr = fn_ptr;
         m_callback_info.m_data_ptr = data_ptr;
+        #ifdef GO_BINDINGS
+        m_callback_info.cgo_handle = go_callback;
+        #endif
         m_callback_info.m_invoked.store(false);
 
         if (m_finished.load() == true) { // see mutex documentation
             // immediately invoke the callback
+            #ifndef GO_BINDINGS
             (*(m_callback_info.m_fn_ptr))(m_user_handle, m_callback_info.m_data_ptr);
+            #else
+            (*(m_callback_info.m_fn_ptr))(go_callback, m_user_handle, m_callback_info.m_data_ptr);
+            #endif
             m_callback_info.m_invoked.store(true);
         }
     }
@@ -450,7 +485,11 @@ struct event_t {
         std::lock_guard<std::mutex> lock(m_callback_mutex);
         if (m_callback_info.m_invoked.load() == false && m_callback_info.m_fn_ptr != nullptr) {
             MCUT_ASSERT(m_user_handle != MC_NULL_HANDLE);
+            #ifndef GO_BINDINGS
             (*(m_callback_info.m_fn_ptr))(m_user_handle, m_callback_info.m_data_ptr);
+            #else
+            (*(m_callback_info.m_fn_ptr))(m_callback_info.cgo_handle, m_user_handle, m_callback_info.m_data_ptr);
+            #endif
             m_callback_info.m_invoked.store(true);
         }
     }
@@ -788,6 +827,10 @@ public:
 
     // function pointer to user-define callback function for status/erro reporting
     pfn_mcDebugOutput_CALLBACK debugCallback = nullptr;
+    #ifdef GO_BINDINGS
+    uintptr_t handle;
+    #endif
+
     // user provided data for callback
     const McVoid* debugCallbackUserParam = nullptr;
 
@@ -800,12 +843,22 @@ public:
     std::atomic<McFlags> dbgCallbackBitfieldSeverity;
     bool dbgCallbackAllowAsyncCalls = true;
 
+    #ifdef GO_BINDINGS
+    void set_debug_callback_data(pfn_mcDebugOutput_CALLBACK cb, const McVoid* data_ptr, uintptr_t cgo_handle)
+    {
+        std::lock_guard<std::mutex> lguard(debugCallbackMutex);
+        debugCallback = cb;
+        debugCallbackUserParam = data_ptr;
+        handle = cgo_handle;
+    }
+    #else
     void set_debug_callback_data(pfn_mcDebugOutput_CALLBACK cb, const McVoid* data_ptr)
     {
         std::lock_guard<std::mutex> lguard(debugCallbackMutex);
         debugCallback = cb;
         debugCallbackUserParam = data_ptr;
     }
+    #endif
 
     struct debug_log_msg_t {
         McDebugSource source;
@@ -823,6 +876,7 @@ public:
         McDebugSeverity severity,
         const std::string& message)
     {
+        // std::cout << "[DBG CB] " << message << " " << debugCallback << std::endl;
         if (this->m_flags & McContextCreationFlags::MC_DEBUG) // information logged only during debug mode
         {
             std::unique_lock<std::mutex> ulock(debugCallbackMutex, std::defer_lock);
@@ -839,8 +893,11 @@ public:
             if (canLog) {
 
                 if (debugCallback != nullptr) { // user gave us a callback function pointer
-
+                    #ifdef GO_BINDINGS
+                    (*debugCallback)(handle, source, type, id, severity, message.length(), message.c_str(), debugCallbackUserParam);
+                    #else
                     (*debugCallback)(source, type, id, severity, message.length(), message.c_str(), debugCallbackUserParam);
+                    #endif
 
                 } else // write to the internal log
                 {

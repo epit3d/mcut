@@ -40,6 +40,7 @@ extern "C" {
 #endif // __cplusplus
 
 #include "platform.h"
+#include "stdbool.h"
 
 /** @file */
 
@@ -491,6 +492,17 @@ typedef enum McQueryFlags {
  *
  * The callback function should have this prototype (in C), or be otherwise compatible with such a prototype.
  */
+#ifdef GO_BINDINGS
+typedef void(MCAPI_PTR *pfn_mcDebugOutput_CALLBACK)(
+    uintptr_t cgo_callback_handle,
+    McDebugSource source,
+    McDebugType type,
+    unsigned int id,
+    McDebugSeverity severity,
+    size_t length,
+    const char *message,
+    const McVoid *userParam);
+#else
 typedef void(MCAPI_PTR* pfn_mcDebugOutput_CALLBACK)(
     McDebugSource source,
     McDebugType type,
@@ -499,6 +511,7 @@ typedef void(MCAPI_PTR* pfn_mcDebugOutput_CALLBACK)(
     size_t length,
     const char* message,
     const McVoid* userParam);
+#endif
 
 /**
  *
@@ -506,7 +519,11 @@ typedef void(MCAPI_PTR* pfn_mcDebugOutput_CALLBACK)(
  *
  * The callback function should have this prototype (in C), or be otherwise compatible with such a prototype.
  */
+#ifndef GO_BINDINGS
 typedef void(MCAPI_PTR* pfn_McEvent_CALLBACK)(McEvent event, McVoid* data);
+#else
+typedef void(MCAPI_PTR *pfn_McEvent_CALLBACK)(uintptr_t cgo_callback_handle, McEvent event, McVoid *data);
+#endif
 
 /** @brief Create an MCUT context.
  *
@@ -630,10 +647,18 @@ extern MCAPI_ATTR McResult MCAPI_CALL mcCreateContextWithHelpers(
  *   -# \p cb is NULL.
  *
  */
+#ifndef GO_BINDINGS
 extern MCAPI_ATTR McResult MCAPI_CALL mcDebugMessageCallback(
     McContext context,
     pfn_mcDebugOutput_CALLBACK cb,
     const McVoid* userParam);
+#else
+extern MCAPI_ATTR McResult MCAPI_CALL mcDebugMessageCallback(
+    McContext context,
+    pfn_mcDebugOutput_CALLBACK cb,
+    const McVoid *userParam,
+    uintptr_t cgo_handle);
+#endif
 
 /**
  * @brief Returns messages stored in an internal log.
@@ -878,10 +903,18 @@ extern MCAPI_ATTR McResult MCAPI_CALL mcGetEventInfo(const McEvent event, McFlag
  *   -# \p event is not a valid object
  *   -# \p eventCallback is NULL
  */
+#ifndef GO_BINDINGS
 extern MCAPI_ATTR McResult MCAPI_CALL mcSetEventCallback(
     McEvent event,
     pfn_McEvent_CALLBACK pfn_notify,
     McVoid* user_data);
+#else
+extern MCAPI_ATTR McResult MCAPI_CALL mcSetEventCallback(
+    McEvent event,
+    pfn_McEvent_CALLBACK pfn_notify,
+    McVoid* user_data,
+    uintptr_t cgo_handle);
+#endif
 
 /**
  * @brief Execute a cutting operation with two meshes - the source mesh, and the cut mesh.

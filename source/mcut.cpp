@@ -79,23 +79,66 @@ MCAPI_ATTR McResult MCAPI_CALL mcCreateContextWithHelpers(McContext* pOutContext
     return return_value;
 }
 
-MCAPI_ATTR McResult MCAPI_CALL mcDebugMessageCallback(McContext pContext, pfn_mcDebugOutput_CALLBACK cb, const McVoid* userParam)
+// MCAPI_ATTR McResult MCAPI_CALL mcDebugMessageCallback(McContext pContext, pfn_mcDebugOutput_CALLBACK cb, const McVoid* userParam)
+// {
+//     McResult return_value = McResult::MC_NO_ERROR;
+//     per_thread_api_log_str.clear();
+
+//     if (pContext == nullptr) {
+//         per_thread_api_log_str = "context ptr (param0) undef (NULL)";
+//     } else if (cb == nullptr) {
+//         per_thread_api_log_str = "callback function ptr (param1) undef (NULL)";
+//     } else {
+//         try {
+//             debug_message_callback_impl(pContext, cb, userParam);
+//         }
+//         CATCH_POSSIBLE_EXCEPTIONS(per_thread_api_log_str);
+//     }
+
+//     if (!per_thread_api_log_str.empty()) {
+//         std::fprintf(stderr, "%s(...) -> %s\n", __FUNCTION__, per_thread_api_log_str.c_str());
+
+//         if (return_value == McResult::MC_NO_ERROR) // i.e. problem with basic local parameter checks
+//         {
+//             return_value = McResult::MC_INVALID_VALUE;
+//         }
+//     }
+
+//     return return_value;
+// }
+
+#ifdef GO_BINDINGS
+MCAPI_ATTR McResult MCAPI_CALL mcDebugMessageCallback(McContext pContext, pfn_mcDebugOutput_CALLBACK cb, const McVoid *userParam, uintptr_t go_callback)
+#else
+MCAPI_ATTR McResult MCAPI_CALL mcDebugMessageCallback(McContext pContext, pfn_mcDebugOutput_CALLBACK cb, const McVoid *userParam)
+#endif
 {
     McResult return_value = McResult::MC_NO_ERROR;
     per_thread_api_log_str.clear();
 
-    if (pContext == nullptr) {
+    if (pContext == nullptr)
+    {
         per_thread_api_log_str = "context ptr (param0) undef (NULL)";
-    } else if (cb == nullptr) {
+    }
+    else if (cb == nullptr)
+    {
         per_thread_api_log_str = "callback function ptr (param1) undef (NULL)";
-    } else {
-        try {
+    }
+    else
+    {
+        try
+        {
+            #ifdef GO_BINDINGS
+            debug_message_callback_impl(pContext, cb, userParam, go_callback);
+            #else
             debug_message_callback_impl(pContext, cb, userParam);
+            #endif
         }
         CATCH_POSSIBLE_EXCEPTIONS(per_thread_api_log_str);
     }
 
-    if (!per_thread_api_log_str.empty()) {
+    if (!per_thread_api_log_str.empty())
+    {
         std::fprintf(stderr, "%s(...) -> %s\n", __FUNCTION__, per_thread_api_log_str.c_str());
 
         if (return_value == McResult::MC_NO_ERROR) // i.e. problem with basic local parameter checks
@@ -394,10 +437,18 @@ MCAPI_ATTR McResult MCAPI_CALL mcWaitForEvents(
     return return_value;
 }
 
+#ifndef GO_BINDINGS
 MCAPI_ATTR McResult MCAPI_CALL mcSetEventCallback(
     McEvent eventHandle,
     pfn_McEvent_CALLBACK eventCallback,
     McVoid* data)
+#else
+MCAPI_ATTR McResult MCAPI_CALL mcSetEventCallback(
+    McEvent eventHandle,
+    pfn_McEvent_CALLBACK eventCallback,
+    McVoid *data,
+    uintptr_t go_callback)
+#endif
 {
     McResult return_value = McResult::MC_NO_ERROR;
     per_thread_api_log_str.clear();
@@ -409,7 +460,11 @@ MCAPI_ATTR McResult MCAPI_CALL mcSetEventCallback(
         per_thread_api_log_str = "invalid event callback function ptr (NULL)";
     } else {
         try {
+            #ifndef GO_BINDINGS
             set_event_callback_impl(eventHandle, eventCallback, data);
+            #else
+            set_event_callback_impl(eventHandle, eventCallback, data, go_callback);
+            #endif
         }
         CATCH_POSSIBLE_EXCEPTIONS(per_thread_api_log_str);
     }

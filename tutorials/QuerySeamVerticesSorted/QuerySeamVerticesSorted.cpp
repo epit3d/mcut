@@ -28,6 +28,7 @@
 
 #include <string>
 #include <vector>
+#include <iostream>
 
 #define my_assert(cond)                             \
     if (!(cond)) {                                  \
@@ -240,101 +241,61 @@ int main()
         //      ... and so on, until last sequence
         // ]
 
-        api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE, 0, NULL, &numBytes);
+        // // check that connected component has correct source mesh
+        // api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_ORIGIN, 0, NULL, &numBytes);
+        // if (api_err != MC_NO_ERROR) {
+        //     fprintf(stderr, "1:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_ORIGIN) failed (api_err=%d)\n", (int)api_err);
+        //     exit(1);
+        // }
+        // McSeamOrigin origin;
+        // api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_ORIGIN, numBytes, &origin, NULL);
+        // if (api_err != MC_NO_ERROR) {
+        //     fprintf(stderr, "2:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_ORIGIN) failed (api_err=%d)\n", (int)api_err);
+        //     exit(1);
+        // }
+
+        // if (origin != MC_SEAM_ORIGIN_SRCMESH) {
+        //     fprintf(stderr, "connected component %d does not have source mesh as origin\n", i);
+        //     continue;
+        // }
+
+        // query the seam vertices (indices)
+        // ---------------------------------
+
+
+        api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX, 0, NULL, &numBytes);
 
         if (api_err != MC_NO_ERROR) {
-            fprintf(stderr, "1:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE) failed (api_err=%d)\n", (int)api_err);
+            fprintf(stderr, "1:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX) failed (api_err=%d)\n", (int)api_err);
             exit(1);
         }
 
-        std::vector<uint32_t> seamVertexSequenceArrayFromMCUT;
-        seamVertexSequenceArrayFromMCUT.resize(numBytes / sizeof(uint32_t));
+        std::vector<uint32_t> seamVertexIndices;
+        seamVertexIndices.resize(numBytes / sizeof(uint32_t));
 
-        api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE, numBytes, seamVertexSequenceArrayFromMCUT.data(), NULL);
+        api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX, numBytes, seamVertexIndices.data(), NULL);
 
         if (api_err != MC_NO_ERROR) {
-            fprintf(stderr, "2:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE) failed (api_err=%d)\n", (int)api_err);
+            fprintf(stderr, "2:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX) failed (api_err=%d)\n", (int)api_err);
             exit(1);
         }
 
-        // We now put each sorted sequence of seam vertices into its own array.
-        // This serves two purposes:
-        // 1. to make it easier to write the sequence vertex list to file
-        // 2. to show users how to access the ordered sequences of vertices per seam/intersection contour
+        uint32_t faceSizesStub = seamVertexIndices.size();
 
-        // list of seam vertex sequences, each with a flag stating whether it is a loop or not
-        std::vector<std::pair<std::vector<McUint32>, McBool>> seamVertexSequences;
-        uint32_t runningOffset = 0; // a runnning offset that we use to access data in "seamVertexSequenceArrayFromMCUT"
-        // number of sequences produced by MCUT
-        const uint32_t numSeamVertexSequences = seamVertexSequenceArrayFromMCUT[runningOffset++]; // always the first element
-
-        // for each sequence...
-        for(uint32_t numSeamVertexSequenceIter = 0; numSeamVertexSequenceIter < numSeamVertexSequences; ++numSeamVertexSequenceIter)
-        {
-            // create entry to store own array and flag
-            seamVertexSequences.push_back(std::pair<std::vector<McUint32>, McBool>());
-            std::pair<std::vector<McUint32>, McBool>& currentSeamVertexSequenceData = seamVertexSequences.back();
-            
-            std::vector<McUint32>& currentSeamVertexSequenceIndices = currentSeamVertexSequenceData.first; // Ordered list of vertex indices in CC defining the seam sequence 
-            McBool &isLoop = currentSeamVertexSequenceData.second; // does it form a loop? (auxilliary piece of info that might be useful to users)
-            
-            // NOTE: order in which we do things here matter because of how we rely on "runningOffset++"
-            // So here, for each sequence we have 1) the number of vertex indices in that sequence 2)
-            // a flag telling us whether the sequence is a loop, and 3) the actually consecutive list of 
-            // sorted vertex indices that for the sequence 
-            const uint32_t currentSeamVertexSequenceIndicesArraySize = seamVertexSequenceArrayFromMCUT[runningOffset++];
-            currentSeamVertexSequenceIndices.resize(currentSeamVertexSequenceIndicesArraySize);
-
-            isLoop = seamVertexSequenceArrayFromMCUT[runningOffset++];
-
-            // copy seam vertex indices of current sequence into local array
-            memcpy(
-                currentSeamVertexSequenceIndices.data(), 
-                seamVertexSequenceArrayFromMCUT.data() + runningOffset, 
-                sizeof(McUint32) * currentSeamVertexSequenceIndicesArraySize);
-
-            runningOffset += currentSeamVertexSequenceIndicesArraySize;
-        }
-
-        //
-        // We are now going to save the sequences to file. To do so, we piggyback
-        // on the "writeOFF" function and pretend that we are writing a mesh where 
-        // each sequence is a face.
-        //
-
-        // stub variables for writing to file
-        uint32_t numFacesStub = seamVertexSequences.size();
-        std::vector<uint32_t> faceSizesArrayStub(numFacesStub);
-        std::vector<uint32_t> faceIndicesArrayStub;
-        
-        std::string flags_str;
-
-        // for each sequence
-        for(uint32_t j =0; j < seamVertexSequences.size(); ++j)
-        {
-            faceSizesArrayStub[j] = seamVertexSequences[j].first.size();
-            faceIndicesArrayStub.insert(
-                faceIndicesArrayStub.cend(), 
-                seamVertexSequences[j].first.cbegin(), 
-                seamVertexSequences[j].first.cend());
-
-            flags_str.append("-id" +std::to_string(j) + ((seamVertexSequences[j].second == MC_TRUE) ? "_isLOOP" : "_isOPEN"));
-        }
-
-        char seamFnameBuf[1024];
-        sprintf(seamFnameBuf, "frag-%d-seam-vertices%s.txt", i, flags_str.c_str());
+        char seamFnameBuf[40];
+        sprintf(seamFnameBuf, "frag-%d-seam-vertices.txt", i);
 
         // save seam vertices to file (.txt)
         // ------------------------
         writeOFF(seamFnameBuf,
             NULL,
-            // We pretend that the list of seam indices is a list of face indices, when in actual
+            // We pretend that the list of seam vertices is a face, when in actual
             // fact we are simply using the output file as storage for later inspection
-            faceIndicesArrayStub.data(),
-            faceSizesArrayStub.data(),
+            seamVertexIndices.data(),
+            &faceSizesStub,
             NULL,
             0,
-            (uint32_t)faceSizesArrayStub.size(), 
+            1, // one face
             0);
 
 
@@ -394,6 +355,105 @@ int main()
             numberOfTriangles,
             0 // zero edges since we don't care about writing edges
         );
+
+        std::cout << "working component" << i << std::endl;
+
+        api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE, 0, NULL, &numBytes);
+
+        if (api_err != MC_NO_ERROR) {
+            fprintf(stderr, "1:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE) failed (api_err=%d)\n", (int)api_err);
+            exit(1);
+        }
+
+        std::vector<uint32_t> seamVertexSequenceArrayFromMCUT;
+        seamVertexSequenceArrayFromMCUT.resize(numBytes / sizeof(uint32_t));
+
+        api_err = mcGetConnectedComponentData(context, connComp, MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE, numBytes, seamVertexSequenceArrayFromMCUT.data(), NULL);
+
+        if (api_err != MC_NO_ERROR) {
+            fprintf(stderr, "2:mcGetConnectedComponentData(MC_CONNECTED_COMPONENT_DATA_SEAM_VERTEX_SEQUENCE) failed (api_err=%d)\n", (int)api_err);
+            exit(1);
+        }
+
+        // We now put each sorted sequence of seam vertices into its own array.
+        // This serves two purposes:
+        // 1. to make it easier to write the sequence vertex list to file
+        // 2. to show users how to access the ordered sequences of vertices per seam/intersection contour
+
+        // list of seam vertex sequences, each with a flag stating whether it is a loop or not
+        std::vector<std::pair<std::vector<McUint32>, McBool>> seamVertexSequences;
+        uint32_t runningOffset = 0; // a runnning offset that we use to access data in "seamVertexSequenceArrayFromMCUT"
+        // number of sequences produced by MCUT
+        const uint32_t numSeamVertexSequences = seamVertexSequenceArrayFromMCUT[runningOffset++]; // always the first element
+
+        // for each sequence...
+        for(uint32_t numSeamVertexSequenceIter = 0; numSeamVertexSequenceIter < numSeamVertexSequences; ++numSeamVertexSequenceIter)
+        {
+            // create entry to store own array and flag
+            seamVertexSequences.push_back(std::pair<std::vector<McUint32>, McBool>());
+            std::pair<std::vector<McUint32>, McBool>& currentSeamVertexSequenceData = seamVertexSequences.back();
+
+            std::vector<McUint32>& currentSeamVertexSequenceIndices = currentSeamVertexSequenceData.first; // Ordered list of vertex indices in CC defining the seam sequence
+            McBool &isLoop = currentSeamVertexSequenceData.second; // does it form a loop? (auxilliary piece of info that might be useful to users)
+
+            // NOTE: order in which we do things here matter because of how we rely on "runningOffset++"
+            // So here, for each sequence we have 1) the number of vertex indices in that sequence 2)
+            // a flag telling us whether the sequence is a loop, and 3) the actually consecutive list of
+            // sorted vertex indices that for the sequence
+            const uint32_t currentSeamVertexSequenceIndicesArraySize = seamVertexSequenceArrayFromMCUT[runningOffset++];
+            currentSeamVertexSequenceIndices.resize(currentSeamVertexSequenceIndicesArraySize);
+
+            isLoop = seamVertexSequenceArrayFromMCUT[runningOffset++];
+
+            // copy seam vertex indices of current sequence into local array
+            memcpy(
+                currentSeamVertexSequenceIndices.data(),
+                seamVertexSequenceArrayFromMCUT.data() + runningOffset,
+                sizeof(McUint32) * currentSeamVertexSequenceIndicesArraySize);
+
+            runningOffset += currentSeamVertexSequenceIndicesArraySize;
+        }
+
+        //
+        // We are now going to save the sequences to file. To do so, we piggyback
+        // on the "writeOFF" function and pretend that we are writing a mesh where
+        // each sequence is a face.
+        //
+
+        // stub variables for writing to file
+        uint32_t numFacesStub = seamVertexSequences.size();
+        std::vector<uint32_t> faceSizesArrayStub(numFacesStub);
+        std::vector<uint32_t> faceIndicesArrayStub;
+
+        std::string flags_str;
+
+        // for each sequence
+        for(uint32_t j =0; j < seamVertexSequences.size(); ++j)
+        {
+            faceSizesArrayStub[j] = seamVertexSequences[j].first.size();
+            faceIndicesArrayStub.insert(
+                faceIndicesArrayStub.cend(),
+                seamVertexSequences[j].first.cbegin(),
+                seamVertexSequences[j].first.cend());
+
+            flags_str.append("-id" +std::to_string(j) + ((seamVertexSequences[j].second == MC_TRUE) ? "_isLOOP" : "_isOPEN"));
+        }
+
+        // char seamFnameBuf[1024];
+        sprintf(seamFnameBuf, "frag-%d-seam-vertices%s.txt", i, flags_str.c_str());
+
+        // save seam vertices to file (.txt)
+        // ------------------------
+        writeOFF(seamFnameBuf,
+            NULL,
+            // We pretend that the list of seam indices is a list of face indices, when in actual
+            // fact we are simply using the output file as storage for later inspection
+            faceIndicesArrayStub.data(),
+            faceSizesArrayStub.data(),
+            NULL,
+            0,
+            (uint32_t)faceSizesArrayStub.size(),
+            0);
     }
 
     // 6. free connected component data
